@@ -3,10 +3,10 @@ import numpy as np
 from ultralytics import YOLO
 
 # Load YOLO model
-model = YOLO("yolov8n.pt")  # Replace with your YOLO model path
+model = YOLO("yolov8n.pt")
 
 def detect_lanes(image):
-    """Detect lanes and return intermediate processing steps"""
+
     # Preprocess image
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -24,6 +24,29 @@ def detect_lanes(image):
 
     return lines, edges, masked_edges
 
+def calculate_curvature(lines, image_shape):
+    """Calculate the radius of curvature of the lane lines."""
+    if lines is None:
+        return 0
+
+    # Extract points from lines
+    points = []
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        points.append((x1, y1))
+        points.append((x2, y2))
+
+    # Fit a second-order polynomial to the points
+    y_points = np.array([p[1] for p in points])
+    x_points = np.array([p[0] for p in points])
+    fit = np.polyfit(y_points, x_points, 2)
+
+    # Calculate the radius of curvature
+    y_eval = np.max(y_points)
+    A, B, C = fit
+    curvature = ((1 + (2 * A * y_eval + B) ** 2) ** 1.5) / np.abs(2 * A)
+
+    return curvature
 
 def draw_lanes(image, lines):
     """Draw lanes and return lane mask"""
@@ -43,19 +66,14 @@ def draw_lanes(image, lines):
 
     return cv2.addWeighted(image, 1, lane_mask, 0.3, 0), lane_mask
 
-
-# Define the missing detect_objects function
 def detect_objects(image):
     """Detect objects using YOLO and return detected objects"""
     results = model.predict(image)  # Detect objects
     return results
 
-
-# Rest of the functions remain the same (make_decision, draw_objects, etc.)
-
 def make_decision(lanes, objects):
     """Make a decision (turn left, turn right, or go straight) based on detected lanes and objects."""
-    decision = "Go Straight"  # Default decision
+    decision = "Go Straight"
 
     # Lane-based decision
     if lanes is not None:
@@ -82,21 +100,20 @@ def make_decision(lanes, objects):
                 confidence = float(box.conf)
                 label = model.names[class_id]
 
-                # Example: Stop if a pedestrian is detected
+
                 if label == "person" and confidence > 0.5:
                     decision = "Stop"
-                # Example: Turn left if a left-turn sign is detected
+
                 elif label == "stop sign" and confidence > 0.5:
                     decision = "Stop"
-                # Example: Slow down if a car is detected in front
+
                 elif label == "car" and confidence > 0.5:
                     decision = "Slow Down"
-                # Example: Avoid if an obstacle is detected
+
                 elif label == "obstacle" and confidence > 0.5:
                     decision = "Avoid"
 
     return decision
-
 
 def draw_objects(image, objects):
     """Draw detected objects on the image."""
@@ -110,14 +127,20 @@ def draw_objects(image, objects):
 
                 # Draw bounding box and label
                 cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 3)
-                cv2.putText(image, f"{label} {confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                cv2.putText(image, f"{label} {confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
 
+def display_car_info(image, speed, location, curvature, offset):
+    """Display car speed, location, curvature, and offset with a visually appealing layout."""
+    # Create a semi-transparent background for the text
+    overlay = image.copy()
+    cv2.rectangle(overlay, (20, 20), (450, 250), (0, 0, 0), -1)  # Background rectangle
+    cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)  # Blend with the original image
 
-def display_car_info(image, speed, location):
-    """Display car speed and location."""
-    cv2.putText(image, f"Speed: {speed} km/h", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(image, f"Location: {location}", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
+    # Display text with larger font size
+    cv2.putText(image, f"Speed: {speed} km/h", (30, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    cv2.putText(image, f"Location: {location}", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    cv2.putText(image, f"Curvature: {curvature:.2f} m", (30, 170), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+    cv2.putText(image, f"Offset: {offset:.2f} m", (30, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
 def draw_square_arrow(image, decision):
     """Draw an arrow based on the decision."""
@@ -129,6 +152,22 @@ def draw_square_arrow(image, decision):
     elif decision == "Go Straight":
         cv2.arrowedLine(image, (width // 2, height - 50), (width // 2, height // 2), (0, 0, 255), 5, tipLength=0.5)
 
+def calculate_offset(lanes, image_shape):
+    """Calculate the offset of the vehicle from the center of the lane."""
+    if lanes is None:
+        return 0
+
+    # Calculate the center of the lane
+    lane_center = np.mean([np.mean(line[0][::2]) for line in lanes])
+    image_center = image_shape[1] / 2
+
+    # Calculate offset in meters (assuming a lane width of 3.7 meters)
+    lane_width_pixels = image_shape[1]  # Adjust based on your calibration
+    lane_width_meters = 3.7
+    offset_pixels = lane_center - image_center
+    offset_meters = (offset_pixels / lane_width_pixels) * lane_width_meters
+
+    return offset_meters
 
 # Main loop with visualization
 cap = cv2.VideoCapture(" test.mp4")
@@ -142,6 +181,8 @@ while cap.isOpened():
 
     # Pipeline processing
     lanes, edges, masked_edges = detect_lanes(frame)
+    curvature = calculate_curvature(lanes, frame.shape)
+    offset = calculate_offset(lanes, frame.shape)
     processed_frame, lane_mask = draw_lanes(frame.copy(), lanes)
     objects = detect_objects(processed_frame)
     decision = make_decision(lanes, objects)
@@ -149,8 +190,8 @@ while cap.isOpened():
     # Draw UI elements
     draw_objects(processed_frame, objects)
     draw_square_arrow(processed_frame, decision)
-    display_car_info(processed_frame, car_speed, car_location)
-    cv2.putText(processed_frame, f"Decision: {decision}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    display_car_info(processed_frame, car_speed, car_location, curvature, offset)
+    cv2.putText(processed_frame, f"Decision: {decision}", (30, 270), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
 
     # Create visualization grid
     h, w = processed_frame.shape[:2]
@@ -175,5 +216,3 @@ while cap.isOpened():
 
 cap.release()
 cv2.destroyAllWindows()
-
-
